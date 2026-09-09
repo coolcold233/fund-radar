@@ -15,6 +15,11 @@ import requests
 warnings.filterwarnings("ignore")
 
 
+def _now_cn() -> datetime.datetime:
+    """北京时间（UTC+8），云端服务器默认 UTC，统一用北京时间判断交易日/时段。"""
+    return datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=8)
+
+
 # ================================================================
 # 新浪实时行情解析
 # ================================================================
@@ -402,12 +407,13 @@ def fetch_all_daily() -> Dict[str, Any]:
     print("[fetch_all_daily] 开始...")
     t0 = datetime.datetime.now()
 
-    today = datetime.date.today()
+    now_bj = _now_cn()
+    today = now_bj.date()
     result: Dict[str, Any] = {
         "date": today.strftime("%Y-%m-%d"),
         "weekday": ["周一","周二","周三","周四","周五","周六","周日"][today.weekday()],
-        "review_time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "data_status": "closed" if datetime.datetime.now().hour >= 15 else "intraday",
+        "review_time": now_bj.strftime("%Y-%m-%d %H:%M:%S"),
+        "data_status": "closed" if now_bj.hour >= 15 else "intraday",
         "market": {},
         "sectors": {},
         "external": {},

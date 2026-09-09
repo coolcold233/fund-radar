@@ -260,6 +260,12 @@ def get_followed_map() -> dict:
     return {str(f["fund_code"]).zfill(6): f for f in _db.list_followed()}
 
 
+def now_cn() -> datetime.datetime:
+    """返回北京时间（UTC+8）。云端 Streamlit 服务器默认是 UTC 时区，
+    直接 datetime.now() 会比北京时间晚 8 小时，统一用本函数。"""
+    return datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=8)
+
+
 def normalize_fund_codes(series: "pd.Series") -> "pd.Series":
     """基金代码列标准化为 6 位字符串（去掉可能的后缀）。"""
     return series.astype(str).str.split(".").str[0].str.strip().str.zfill(6)
@@ -2331,7 +2337,7 @@ def render_portfolio():
     with s3:
         st.metric("预估影响金额", f"{est_total_pnl:,.2f} 元")
     with s4:
-        st.metric("行情时间", datetime.datetime.now().strftime("%H:%M:%S"))
+        st.metric("行情时间", now_cn().strftime("%H:%M:%S（北京时间）"))
 
     st.caption(
         "⚠️ 以上为基于各基金前十大重仓股的粗略估算，仅反映重仓股部分（通常占净值 30~50%），"

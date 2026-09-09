@@ -7,7 +7,7 @@
 import json
 import re
 import traceback
-from typing import Optional, Any, Tuple
+from typing import Optional, Any, Tuple, Dict
 
 import pandas as pd
 import requests
@@ -547,11 +547,10 @@ class FundDataFetcher:
         """
         获取指定 A 股股票的实时行情（用于持仓追踪看盘）。
 
-        四级降级策略：
-        1) push2 批量行情（东方财富，最快）
-        2) push2 单只行情（东方财富，更稳定）
-        3) AKShare 全市场行情（东方财富体系，最终兜底）
-        4) 新浪财经行情（跨系统，独立服务器体系，绕过东财阻断）
+        四级降级 + 合并补全策略：
+        依次尝试各数据源，每个数据源只负责拉取「当前仍缺失」的股票，
+        最后合并所有结果。这样即使东财 push2 在海外只返回部分股票，
+        剩余股票也会由新浪等独立数据源补齐，避免大片 None。
 
         返回列：股票代码 / 股票名称 / 最新价 / 涨跌幅 / 涨跌额 / 今开 / 昨收 / 最高 / 最低
         """
@@ -559,47 +558,83 @@ class FundDataFetcher:
         if not codes:
             return None, "未提供股票代码"
 
+        merged_rows: Dict[str, dict] = {}
         errors = []
 
-        # 尝试 1：批量接口
+        def _absorb(df) -> None:
+            """把数据源返回的 DataFrame 合并进结果（已有的代码不覆盖）。"""
+            if df is None or len(df) == 0:
+                return
+            for _, row in df.iterrows():
+                c = str(row.get("股票代码", "")).strip().zfill(6)
+                # 只收有有效价格的行
+                if c and c not in merged_rows and pd.notna(row.get("最新价")):
+                    merged_rows[c] = row.to_dict()
+
+        def _missing() -> list:
+            return [c for c in codes if c not in merged_rows]
+
+        # 尝试 1：批量接口（东财 push2，最快；海外可能只返回部分）
         try:
             df, err = self._fetch_quote_batch(codes)
-            if df is not None and len(df) > 0:
-                return df, None
-            errors.append(f"批量: {err}")
+            _absorb(df)
+            if err:
+                errors.append(f"批量: {err}")
         except Exception as e:
             errors.append(f"批量: {type(e).__name__}: {e}")
 
-        # 尝试 2：单只接口降级
-        try:
-            df, err = self._fetch_quote_single(codes)
-            if df is not None and len(df) > 0:
-                return df, None
-            errors.append(f"单只: {err}")
-        except Exception as e:
-            errors.append(f"单只: {type(e).__name__}: {e}")
+        # 尝试 2：单只接口补全缺失股票
+        miss = _missing()
+        if miss:
+            try:
+                df, err = self._fetch_quote_single(miss)
+                _absorb(df)
+                if err:
+                    errors.append(f"单只: {err}")
+            except Exception as e:
+                errors.append(f"单只: {type(e).__name__}: {e}")
 
-        # 尝试 3：AKShare 全市场兜底
-        try:
-            df, err = self._fetch_quote_akshare(codes)
-            if df is not None and len(df) > 0:
-                return df, None
-            errors.append(f"AKShare: {err}")
-        except Exception as e:
-            errors.append(f"AKShare: {type(e).__name__}: {e}")
+        # 尝试 3：AKShare 全市场兜底补全
+        miss = _missing()
+        if miss:
+            try:
+                df, err = self._fetch_quote_akshare(miss)
+                _absorb(df)
+                if err:
+                    errors.append(f"AKShare: {err}")
+            except Exception as e:
+                errors.append(f"AKShare: {type(e).__name__}: {e}")
 
-        # 尝试 4：新浪财经跨系统兜底（与东财完全独立的服务器体系）
-        try:
-            df, err = self._fetch_quote_sina(codes)
-            if df is not None and len(df) > 0:
-                return df, None
-            errors.append(f"新浪: {err}")
-        except Exception as e:
-            errors.append(f"新浪: {type(e).__name__}: {e}")
+        # 尝试 4：新浪财经跨系统兜底（与东财完全独立，海外也能访问）
+        miss = _missing()
+        if miss:
+            try:
+                df, err = self._fetch_quote_sina(miss)
+                _absorb(df)
+                if err:
+                    errors.append(f"新浪: {err}")
+            except Exception as e:
+                errors.append(f"新浪: {type(e).__name__}: {e}")
 
-        # 全部失败
-        msg = "实时行情获取失败（所有数据源均不可用）：" + " | ".join(errors)
-        return None, msg
+        if not merged_rows:
+            msg = "实时行情获取失败（所有数据源均不可用）：" + " | ".join(errors)
+            return None, msg
+
+        result_df = pd.DataFrame(list(merged_rows.values()))
+        # 按请求顺序排序
+        order = {c: i for i, c in enumerate(codes)}
+        result_df["_o"] = result_df["股票代码"].map(order)
+        result_df = result_df.sort_values("_o").drop(columns="_o").reset_index(drop=True)
+
+        final_missing = _missing()
+        if final_missing:
+            # 仍有缺失：为缺失股票补空行，保证表格行数完整（显示 None/—）
+            empty_rows = [{"股票代码": c, "股票名称": ""} for c in final_missing]
+            result_df = pd.concat([result_df, pd.DataFrame(empty_rows)], ignore_index=True)
+            result_df["_o"] = result_df["股票代码"].map(order)
+            result_df = result_df.sort_values("_o").drop(columns="_o").reset_index(drop=True)
+
+        return result_df, None
 
     # -----------------------------------------------------------------
     # 内部工具

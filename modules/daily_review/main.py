@@ -12,7 +12,7 @@ import pandas as pd
 import streamlit as st
 
 from .storage import (
-    save_daily_review, load_daily_review,
+    save_daily_review, load_daily_review, now_cn,
 )
 from .data_fetcher import (
     fetch_all_daily, NEWS_LEVELS, CRITICAL_KEYWORDS, IMPORTANT_KEYWORDS,
@@ -29,10 +29,11 @@ def render_daily_review():
     """当日股市复盘主页面。"""
     st.header("📅 当日股市复盘")
 
-    today = datetime.date.today()
+    _now = now_cn()
+    today = _now.date()
     weekday_cn = ["周一","周二","周三","周四","周五","周六","周日"][today.weekday()]
 
-    is_after_close = datetime.datetime.now().hour >= 15
+    is_after_close = _now.hour >= 15
     is_weekend = today.weekday() >= 5
     target_date = today
 

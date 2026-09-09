@@ -2,10 +2,18 @@ from __future__ import annotations
 
 import csv
 import json
+import datetime
 from pathlib import Path
 from typing import Optional
 
 import pandas as pd
+
+
+def now_cn() -> datetime.datetime:
+    """返回北京时间（UTC+8）。云端 Streamlit 服务器默认是 UTC 时区，
+    直接 datetime.now() 会比北京时间晚 8 小时，统一用本函数。"""
+    return datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=8)
+
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent / "data"
 
