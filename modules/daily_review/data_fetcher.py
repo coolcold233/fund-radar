@@ -423,6 +423,8 @@ def _sectors_to_dict(d: pd.DataFrame) -> Dict[str, Any]:
         "up_ratio": round(float((d["pct"] > 0).mean()), 3),
         "spread": round(float(d["pct"].max() - d["pct"].min()), 2),
         "total": int(len(d)),
+        # 全量板块涨跌表，供归因模块做"新闻→板块"交叉验证
+        "all": {str(r["name"]): round(float(r["pct"]), 2) for _, r in d.iterrows()},
     }
 
 

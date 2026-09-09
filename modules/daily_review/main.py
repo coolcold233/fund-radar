@@ -450,27 +450,76 @@ def _render_attribution(data: Dict):
     else:
         judgment = "今日A股窄幅震荡，多空博弈激烈。"
 
-    # 提取关键新闻（critical + important）
-    critical_news = [n for n in news if n.get("level") == "critical"]
-    important_news = [n for n in news if n.get("level") == "important"]
-    top_news = critical_news + important_news[:3]
-
     with st.container(border=True):
         st.markdown(f"**【综合判断】** {judgment}")
         st.markdown(f"📊 上证 {sh_chg:+.2f}% ｜ 创业板 {cn_chg:+.2f}% ｜ 上涨板块占比 {up_ratio*100:.0f}%")
 
-        if top_news:
-            st.markdown("**【驱动今日行情的核心新闻】**")
-            for n in top_news[:5]:
-                level_tag = n.get("level_label", "")
-                title = n.get("title", "")
-                time = n.get("time", "")
-                st.markdown(f"- {level_tag} **{title}**（{time}）")
-        else:
-            st.markdown("今日无重大财经新闻驱动，行情以技术面/资金面为主。")
+    # ---- 事件→板块传导分析（核心）----
+    from .attribution import analyze_news_attribution
 
-        st.markdown("**【行情类型】** " + sectors.get("market_type", "震荡分化"))
-        st.markdown("**【归因可信度】** ⭐⭐⭐☆☆ （新闻+行情联动可提升可信度）")
+    sectors_all = sectors.get("all", {}) if isinstance(sectors, dict) else {}
+    # 取重要性高的新闻做归因（避免太多噪音）
+    focus_news = [n for n in news if n.get("level") in ("critical", "important")][:8]
+    if not focus_news:
+        focus_news = news[:5]
+
+    attribution_results = analyze_news_attribution(focus_news, sectors_all)
+    # 只保留有命中规则的新闻
+    matched = [r for r in attribution_results if r["impacts"]]
+
+    st.markdown("#### 🔗 事件 → 板块传导分析")
+    st.caption("说明：以下呈现新闻事件与板块涨跌的**相关性**及传导逻辑，并非单一因果归因。"
+               "股市受多重因素驱动，板块实际涨跌可能被其他因素对冲。✅ 表示实际方向与逻辑一致，❌ 表示相反。")
+
+    if not matched:
+        st.info("今日暂无能直接匹配到板块影响的重大新闻，行情可能更多由资金面/技术面驱动。")
+    else:
+        verified_count = 0
+        total_count = 0
+        for item in matched:
+            n = item["news"]
+            level_tag = n.get("level_label", "")
+            title = n.get("title", "")
+            time = n.get("time", "")
+            link = n.get("link") or ""
+            title_html = f"**{title}**"
+            if link:
+                title_html = f'<a href="{link}" target="_blank" style="color:inherit;">{title}</a> 🔗'
+            st.markdown(f"**{level_tag} {title_html}** <span style='color:#888'>（{time}）</span>", unsafe_allow_html=True)
+
+            # 传导逻辑（取第一条命中规则的宏观逻辑）
+            if item["rules"]:
+                st.markdown(f"  > 💡 传导逻辑：{item['rules'][0]['logic']}")
+
+            # 受影响板块 + 实际涨跌验证
+            lines = []
+            for imp in item["impacts"]:
+                dir_tag = "📈利好" if imp["direction"] == 1 else "📉利空"
+                actual = imp["actual"]
+                if actual is not None:
+                    actual_str = f"{actual:+.2f}%"
+                    color = "color:red" if actual > 0 else ("color:green" if actual < 0 else "")
+                    verify_tag = "✅" if imp["verified"] else "❌"
+                    if imp["verified"]:
+                        verified_count += 1
+                    total_count += 1
+                    cell = f'  - {dir_tag} **{imp["sector"]}** → <span style="{color}">{actual_str}</span> {verify_tag}'
+                else:
+                    cell = f'  - {dir_tag} **{imp["sector"]}**（无当日数据）'
+                    total_count += 1
+                lines.append(cell + f' &nbsp;<span style="color:#888">— {imp["chain"]}</span>')
+            st.markdown("\n".join(lines), unsafe_allow_html=True)
+            st.markdown("")  # 空行
+
+        # 汇总验证率
+        if total_count > 0:
+            rate = verified_count / total_count * 100
+            st.markdown(f"**📊 传导验证率**：{verified_count}/{total_count} 个板块实际方向与逻辑一致（{rate:.0f}%）。"
+                        f"{'整体相关性较强。' if rate >= 50 else '一致性一般，行情可能受其他因素主导。'}")
+
+    st.markdown("**【行情类型】** " + sectors.get("market_type", "震荡分化"))
+    credibility = "⭐⭐⭐⭐☆" if (total_count and verified_count / total_count >= 0.5) else "⭐⭐⭐☆☆"
+    st.markdown(f"**【归因可信度】** {credibility} （基于事件-板块传导规则与当日实际涨跌交叉验证）")
 
 
 # ================================================================
