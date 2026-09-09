@@ -2189,7 +2189,7 @@ def render_portfolio():
             st.rerun()
 
     # ---- 删除单个持仓（常驻显示，不藏在折叠面板里）----
-    del_col1, del_col2 = st.columns([3, 1])
+    del_col1, del_col2, del_col3 = st.columns([3, 1, 1])
     with del_col1:
         del_opts = [f"{h['fund_code']} {h['fund_name']}" for h in holdings]
         del_code = st.selectbox("选择要删除的持仓", del_opts, key="pf_del_sel")
@@ -2200,6 +2200,19 @@ def render_portfolio():
             code_to_del = del_code.split(" ")[0]
             _db.delete_holding(code_to_del)
             st.success(f"已删除持仓：{code_to_del}")
+            st.rerun()
+    with del_col3:
+        st.write("")
+        st.write("")
+        # 一键把全部持仓基金添加为关注
+        if st.button("⭐ 关注全部持仓", key="pf_follow_all_btn", use_container_width=True,
+                      help="把您当前持仓的基金全部添加到关注列表，方便在基金数据页快速查看"):
+            added = 0
+            for h in holdings:
+                c = str(h["fund_code"]).zfill(6)
+                _db.follow_fund(c, h.get("fund_name", ""))
+                added += 1
+            st.success(f"✅ 已将 {added} 只持仓基金全部添加到关注列表")
             st.rerun()
 
     # ---- 看盘区 ----
@@ -2389,6 +2402,130 @@ def render_portfolio():
                 )
             show_cols2 = [c for c in ["序号", "股票代码", "股票名称", "占净值比例", "持股数", "持仓市值"] if c in h_disp.columns]
             st.dataframe(h_disp[show_cols2], use_container_width=True, hide_index=True, height=300)
+
+    # ---- 持仓基金分析 ----
+    st.markdown("---")
+    st.subheader("📊 持仓基金分析（风险体检）")
+    st.caption(
+        "基于每只基金近 1 年真实净值波动，计算年化收益、年化波动、夏普比率、最大回撤。"
+        "并采用**风险平价**模型给出配置优化建议（波动小的基金多配、波动大的少配）。"
+    )
+
+    col_an1, col_an2 = st.columns([1, 3])
+    with col_an1:
+        run_analysis = st.button("🔍 分析持仓", type="primary", use_container_width=True, key="pf_analyze_btn")
+    with col_an2:
+        st.caption("点击后将逐只拉取近 1 年净值数据（约 10-30 秒），给出风险体检 + 配置优化建议。")
+
+    if run_analysis:
+        funds_to_analyze = [
+            (str(h["fund_code"]).zfill(6), h.get("fund_name", ""))
+            for h in holdings
+        ]
+        if len(funds_to_analyze) < 1:
+            st.info("没有持仓基金可分析。")
+        elif len(funds_to_analyze) > 10:
+            st.warning("持仓基金较多，仅分析前 10 只（按添加顺序）。")
+            funds_to_analyze = funds_to_analyze[:10]
+
+        if funds_to_analyze:
+            progress_bar = st.progress(0.0, text="正在拉取净值数据...")
+            current_amount = float(h_df["amount"].sum())
+
+            def _progress_cb(idx, total, code):
+                progress_bar.progress(idx / total, text=f"正在获取 {idx}/{total}：{code} 的净值数据...")
+
+            with st.spinner(f"正在分析 {len(funds_to_analyze)} 只持仓基金..."):
+                an_df, an_warnings = build_smart_allocation(
+                    funds_to_analyze, current_amount,
+                    fetcher=get_default_fetcher(),
+                    progress_callback=_progress_cb,
+                )
+            progress_bar.empty()
+
+            for w in an_warnings:
+                st.warning(w)
+
+            if len(an_df) >= 1:
+                # --- 风险体检表 ---
+                st.markdown("##### 📈 持仓风险体检（按波动率从低到高排序）")
+                show_an = an_df.copy()
+                show_an["年化收益"] = show_an["年化收益"].map(lambda x: f"{x*100:.2f}%")
+                show_an["年化波动"] = show_an["年化波动"].map(lambda x: f"{x*100:.2f}%")
+                show_an["最大回撤"] = show_an["最大回撤"].map(lambda x: f"{x*100:.2f}%")
+                show_an["夏普比率"] = show_an["夏普比率"].map(lambda x: f"{x:.2f}")
+                show_an["风险平价权重"] = show_an["风险平价权重"].map(lambda x: f"{x*100:.1f}%")
+                show_an["建议金额(风险平价)"] = show_an["建议金额(风险平价)"].map(lambda x: f"¥{x:,.0f}")
+                show_an["等权金额"] = show_an["等权金额"].map(lambda x: f"¥{x:,.0f}")
+                if "最小方差权重" in show_an.columns:
+                    show_an["最小方差权重"] = show_an["最小方差权重"].map(lambda x: f"{x*100:.1f}%")
+                    show_an["建议金额(最小方差)"] = show_an["建议金额(最小方差)"].map(lambda x: f"¥{x:,.0f}")
+                    disp_cols = ["基金代码", "基金名称", "年化收益", "年化波动", "夏普比率",
+                                 "最大回撤", "风险平价权重", "建议金额(风险平价)",
+                                 "最小方差权重", "建议金额(最小方差)", "等权金额"]
+                else:
+                    disp_cols = ["基金代码", "基金名称", "年化收益", "年化波动", "夏普比率",
+                                 "最大回撤", "风险平价权重", "建议金额(风险平价)", "等权金额"]
+                st.dataframe(show_an[disp_cols], use_container_width=True, hide_index=True)
+
+                # --- 关键发现 ---
+                st.markdown("##### 💡 关键发现")
+                lowest_vol = an_df.iloc[0]
+                highest_vol = an_df.iloc[-1]
+                findings = []
+                findings.append(
+                    f"- 📌 最稳健的持仓：「{lowest_vol['基金名称'] or lowest_vol['基金代码']}」"
+                    f"（年化波动 {lowest_vol['年化波动']*100:.1f}%，最大回撤 {lowest_vol['max_drawdown']*100:.1f}%）"
+                )
+                findings.append(
+                    f"- ⚠️ 波动最大的持仓：「{highest_vol['基金名称'] or highest_vol['基金代码']}」"
+                    f"（年化波动 {highest_vol['年化波动']*100:.1f}%，最大回撤 {highest_vol['max_drawdown']*100:.1f}%），"
+                    f"建议控制仓位"
+                )
+                # 看看有没有夏普为负的
+                neg_sharpe = an_df[an_df["夏普比率"] < 0]
+                if len(neg_sharpe) > 0:
+                    findings.append(
+                        f"- 🚫 有 {len(neg_sharpe)} 只基金夏普比率为负（承担风险却没获得超额收益），"
+                        f"建议考虑是否继续持有"
+                    )
+                # 配置建议
+                # 计算实际权重 vs 建议权重差异
+                an_df["_actual_w"] = an_df["基金代码"].map(
+                    {str(h["fund_code"]).zfill(6): float(h["amount"]) / current_amount for h in holdings}
+                )
+                an_df["_diff"] = an_df["_actual_w"] - an_df["风险平价权重"]
+                over_weighted = an_df[an_df["_diff"] > 0.05]
+                if len(over_weighted) > 0:
+                    names = ", ".join(
+                        f"「{r['基金名称'] or r['基金代码']}」(超配{(r['_diff']*100):.0f}%)"
+                        for _, r in over_weighted.head(3).iterrows()
+                    )
+                    findings.append(f"- 📊 相对风险平价建议，以下基金可能**超配**：{names}")
+                under_weighted = an_df[an_df["_diff"] < -0.05]
+                if len(under_weighted) > 0:
+                    names = ", ".join(
+                        f"「{r['基金名称'] or r['基金代码']}」(低配{(r['_diff']*100):.0f}%)"
+                        for _, r in under_weighted.head(3).iterrows()
+                    )
+                    findings.append(f"- 📊 相对风险平价建议，以下基金可能**低配**：{names}")
+
+                for f in findings:
+                    st.markdown(f)
+
+                with st.expander("📖 指标解读（新手必读）"):
+                    st.markdown(
+                        "- **年化波动**：基金一年涨跌的'颠簸程度'。低于 15% 算稳健，"
+                        "超过 30% 说明大起大落。\n"
+                        "- **最大回撤**：历史上从最高点亏得最惨的幅度。"
+                        "-40% 意味着曾经 1 万块亏到只剩 6 千。\n"
+                        "- **夏普比率**：每承担 1 份风险换来多少超额收益。"
+                        "大于 1 算优秀，负数意味着还不如不投。\n"
+                        "- **风险平价权重**：波动越小的基金建议配越多，"
+                        "让组合整体更稳（桥水全天候策略核心思想）。\n"
+                        "- **超配/低配**：你的实际配置 vs 建议配置的差距。"
+                        "超配 = 你投太多了，低配 = 投太少了。"
+                    )
 
 
 # ===============================
