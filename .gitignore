@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+.trae/
+
+# 数据文件（运行时生成，不需要版本控制）
+data/*.db
+data/daily_review/*.json
+data/market_data/*.csv
+data/my_funds/*.json
+
+# 日志
+*.log
+
+# 系统文件
+Thumbs.db
+.DS_Store
+
+# 构建产物
+_build_project.py
+
+# 本地启动器（云端不需要）
+start.bat
+start.ps1
+start.py
+start_debug.ps1
+启动基金雷达.cmd
+启动基金雷达.ps1
+启动基金雷达.vbs
+
+# 备份/测试文件
+*.backup
+*.lnk
+_test*
+_check*
+test.txt

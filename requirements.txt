@@ -1,0 +1,19 @@
+# 基金雷达 - 项目依赖清单
+# 安装命令：pip install -r requirements.txt
+
+# 核心 Web 框架
+streamlit>=1.30.0
+
+# 基金数据源
+akshare>=1.12.0
+
+# 数据处理
+pandas>=2.0.0
+numpy>=1.24.0
+openpyxl>=3.1.0
+
+# HTTP 请求（data_fetcher 直接使用）
+requests>=2.28.0
+
+# 图表
+plotly>=5.18.0
