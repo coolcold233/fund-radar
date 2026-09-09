@@ -257,7 +257,7 @@ def _render_news(data: Dict):
             key="dr_news_level",
         )
     with col_f2:
-        show_limit = st.selectbox("显示数量", [10, 20, 50], default_index=1, key="dr_news_limit")
+        show_limit = st.selectbox("显示数量", [10, 20, 50], index=1, key="dr_news_limit")
 
     level_map = {v: k for k, v in NEWS_LEVELS.items()}
     filtered = [n for n in news if n.get("level_label") in show_level]
