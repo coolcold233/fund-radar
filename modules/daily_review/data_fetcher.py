@@ -288,6 +288,112 @@ def _fetch_news(hours: int = 24) -> List[Dict]:
 
 
 # ================================================================
+# 外围市场（全球股指 / 汇率 / 商品 / 美债）
+# ================================================================
+
+# yfinance 代码 → (内部key, 中文名)
+YF_TICKERS = {
+    "^IXIC": ("nasdaq", "纳斯达克"),
+    "^GSPC": ("sp500", "标普500"),
+    "^DJI": ("dow", "道琼斯"),
+    "^SOX": ("sox", "费城半导体"),
+    "^HSI": ("hsi", "恒生指数"),
+    "DX-Y.NYB": ("dxy", "美元指数"),
+    "CNH=X": ("usdcnh", "离岸人民币"),
+    "CL=F": ("oil", "WTI原油"),
+    "GC=F": ("gold", "黄金"),
+    "^TNX": ("us10y", "美债10Y"),
+}
+
+
+def _fetch_external_yfinance() -> Dict[str, Dict]:
+    """用 yfinance 拉外围市场（云端海外环境可直连 Yahoo）。"""
+    try:
+        import yfinance as yf
+    except ImportError:
+        return {}
+
+    out: Dict[str, Dict] = {}
+    try:
+        tickers = list(YF_TICKERS.keys())
+        data = yf.download(
+            tickers, period="5d", interval="1d",
+            progress=False, auto_adjust=False, threads=False,
+        )
+        if data is None or len(data) < 2:
+            return {}
+
+        close = data["Close"] if "Close" in data.columns.get_level_values(0) else None
+        if close is None:
+            return {}
+
+        for ticker, (key, name) in YF_TICKERS.items():
+            try:
+                series = close[ticker].dropna() if ticker in close.columns else pd.Series(dtype=float)
+                if len(series) < 2:
+                    continue
+                last = float(series.iloc[-1])
+                prev = float(series.iloc[-2])
+                if key == "us10y":
+                    # 美债收益率：报价即百分数（4.25 = 4.25%），变化用 bp
+                    out[key] = {
+                        "name": name, "close": last,
+                        "change_pct": (last - prev) * 100,  # 单位 bp
+                        "is_bond": True,
+                    }
+                elif key == "usdcnh":
+                    # USD/CNH：上涨代表人民币贬值
+                    out[key] = {
+                        "name": name, "close": last,
+                        "change_pct": (last / prev - 1) * 100,
+                        "inverse": True,  # 涨=人民币贬值（利空提示）
+                    }
+                else:
+                    out[key] = {
+                        "name": name, "close": last,
+                        "change_pct": (last / prev - 1) * 100,
+                    }
+            except Exception:
+                continue
+    except Exception as e:
+        print(f"  yfinance 外围市场失败: {type(e).__name__}: {e}")
+    return out
+
+
+def _fetch_external() -> Dict[str, Dict]:
+    """外围市场：yfinance 为主（海外直连），akshare 东财为补充。"""
+    result = _fetch_external_yfinance()
+
+    # akshare 东财全球指数补充缺失项
+    try:
+        import akshare as ak
+        df = ak.index_global_spot_em()
+        if df is not None and len(df) > 0:
+            name_col = next((c for c in df.columns if "名称" in str(c)), None)
+            pct_col = next((c for c in df.columns if "涨跌幅" in str(c)), None)
+            price_col = next((c for c in df.columns if "最新价" in str(c) or "收盘" in str(c)), None)
+            em_map = {
+                "纳斯达克": ("nasdaq", "纳斯达克"), "标普500": ("sp500", "标普500"),
+                "道琼斯": ("dow", "道琼斯"), "费城半导体": ("sox", "费城半导体"),
+                "恒生指数": ("hsi", "恒生指数"),
+            }
+            if name_col and pct_col:
+                for _, row in df.iterrows():
+                    nm = str(row[name_col])
+                    for kw, (key, cname) in em_map.items():
+                        if key not in result and kw in nm:
+                            result[key] = {
+                                "name": cname,
+                                "close": float(row[price_col]) if price_col and pd.notna(row.get(price_col)) else None,
+                                "change_pct": float(row[pct_col]) if pd.notna(row.get(pct_col)) else None,
+                            }
+    except Exception as e:
+        print(f"  akshare 外围补充失败: {type(e).__name__}")
+
+    return result
+
+
+# ================================================================
 # 一站式拉取
 # ================================================================
 
@@ -372,11 +478,15 @@ def fetch_all_daily() -> Dict[str, Any]:
     print("  -> 财经新闻...")
     result["news"] = _fetch_news(hours=24)
 
-    # 5. 情绪评分
+    # 5. 外围市场（yfinance 为主，海外环境友好）
+    print("  -> 外围市场...")
+    result["external"] = _fetch_external()
+
+    # 6. 情绪评分
     result["market"]["sentiment_score"], result["market"]["sentiment_label"] = _calc_sentiment_score(result)
 
     elapsed = round((datetime.datetime.now() - t0).total_seconds(), 1)
-    print(f"[fetch_all_daily] 完成 {elapsed}s, 指数={len([k for k in result['market'] if k in SINA_INDEX_CODES])} 新闻={len(result['news'])}")
+    print(f"[fetch_all_daily] 完成 {elapsed}s, 指数={len([k for k in result['market'] if k in SINA_INDEX_CODES])} 外围={len(result['external'])} 新闻={len(result['news'])}")
     return result
 
 

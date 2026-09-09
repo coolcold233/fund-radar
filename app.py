@@ -19,6 +19,7 @@ if str(src_path) not in sys.path:
 from src.config import get_config
 from src.data_fetcher import get_default_fetcher
 from src.analysis import drawdown_series, summary_metrics
+from src.portfolio_analytics import build_smart_allocation
 from src.database import get_default_db
 
 # 当日股市复盘模块
@@ -1842,6 +1843,100 @@ def render_risk_assessment():
                         f"📌 有 **{len(followed_only)}** 只关注基金尚未持仓（金额为 0），"
                         f"请在「💼 持仓追踪」页添加金额，以便精确对比。"
                     )
+
+                # ---- 🤖 智能配置建议（风险平价 / 最小方差）----
+                st.markdown("---")
+                st.subheader("🤖 智能配置建议（基于基金历史波动）")
+                st.caption(
+                    "采用机构常用的**风险平价**（桥水全天候策略核心思想：波动小的基金多配、"
+                    "波动大的少配）与**最小方差**（Markowitz 均值-方差模型）方法，"
+                    "根据每只基金近 1 年的真实净值波动，计算您该给每只基金投多少钱。"
+                )
+
+                fund_options = [
+                    f"{r['基金代码']} {r['基金名称']}" for _, r in all_df.iterrows()
+                ]
+                if len(fund_options) > 10:
+                    st.caption(f"共 {len(fund_options)} 只基金，为控制计算量每次最多分析 10 只。")
+                default_picks = fund_options[:10]
+                picked = st.multiselect(
+                    "选择参与智能配置的基金（建议 2-10 只，风格越分散效果越好）",
+                    options=fund_options,
+                    default=default_picks,
+                    key="sa_picked_funds",
+                )
+
+                col_run, col_info = st.columns([1, 3])
+                with col_run:
+                    run_smart = st.button("🤖 生成智能配置", use_container_width=True, type="primary")
+                with col_info:
+                    st.caption(f"投资总金额：¥{total_amount:,.0f}（在上方「投资金额」处修改）")
+
+                if run_smart:
+                    if len(picked) < 2:
+                        st.warning("请至少选择 2 只基金进行配置分析。")
+                    else:
+                        funds_input = []
+                        for p in picked[:10]:
+                            parts = str(p).split(" ", 1)
+                            funds_input.append((parts[0], parts[1] if len(parts) > 1 else ""))
+
+                        with st.spinner(f"正在拉取 {len(funds_input)} 只基金的净值数据并计算风险指标…（约需 10-30 秒）"):
+                            sa_df, sa_warnings = build_smart_allocation(
+                                funds_input, total_amount, fetcher=get_default_fetcher()
+                            )
+
+                        if sa_warnings:
+                            for w in sa_warnings:
+                                st.warning(w)
+
+                        if len(sa_df) >= 1:
+                            st.markdown("##### 📈 基金风险体检（按波动率从低到高）")
+                            show_df = sa_df.copy()
+                            show_df["年化收益"] = show_df["年化收益"].map(lambda x: f"{x*100:.2f}%")
+                            show_df["年化波动"] = show_df["年化波动"].map(lambda x: f"{x*100:.2f}%")
+                            show_df["最大回撤"] = show_df["最大回撤"].map(lambda x: f"{x*100:.2f}%")
+                            show_df["夏普比率"] = show_df["夏普比率"].map(lambda x: f"{x:.2f}")
+                            show_df["风险平价权重"] = show_df["风险平价权重"].map(lambda x: f"{x*100:.1f}%")
+                            money_cols = ["建议金额(风险平价)", "等权金额"]
+                            if "建议金额(最小方差)" in show_df.columns:
+                                money_cols.append("建议金额(最小方差)")
+                                show_df["最小方差权重"] = show_df["最小方差权重"].map(lambda x: f"{x*100:.1f}%")
+                            for c in money_cols:
+                                show_df[c] = show_df[c].map(lambda x: f"¥{x:,.0f}")
+                            st.dataframe(
+                                show_df[["基金代码", "基金名称", "年化收益", "年化波动", "夏普比率",
+                                         "最大回撤", "风险平价权重", "建议金额(风险平价)"] +
+                                        (["最小方差权重", "建议金额(最小方差)"] if "最小方差权重" in show_df.columns else []) +
+                                        ["等权金额"]],
+                                use_container_width=True, hide_index=True,
+                            )
+
+                            st.markdown("##### 💡 新手怎么看这张表？")
+                            with st.expander("点击查看指标解读"):
+                                st.markdown(
+                                    "- **年化波动**：基金一年涨跌的'颠簸程度'。低于 15% 算稳健，"
+                                    "超过 30% 说明大起大落，新手要少配。\n"
+                                    "- **最大回撤**：历史上从最高点亏得最惨的幅度。-40% 意味着曾经 1 万块亏到只剩 6 千，"
+                                    "买之前先问自己能不能承受。\n"
+                                    "- **夏普比率**：每承担 1 份风险换来多少超额收益。大于 1 算优秀，"
+                                    "越高说明'性价比'越好。\n"
+                                    "- **风险平价权重**：波动越小的基金权重越高，让组合整体更稳——"
+                                    "这是桥水基金「全天候策略」的核心思想。\n"
+                                    "- **等权金额**：每只基金投一样多的钱，作为对照。"
+                                    "你会发现风险平价建议'往低波基金倾斜'，而不是平均撒钱。"
+                                )
+
+                            low_vol = sa_df.iloc[0]
+                            high_vol = sa_df.iloc[-1]
+                            st.success(
+                                f"📌 **配置建议**：最稳的是「{low_vol['基金名称'] or low_vol['基金代码']}」"
+                                f"（年化波动 {low_vol['年化波动']*100:.1f}%），"
+                                f"建议投入 ¥{low_vol['建议金额(风险平价)']:,.0f}；"
+                                f"波动最大的是「{high_vol['基金名称'] or high_vol['基金代码']}」"
+                                f"（年化波动 {high_vol['年化波动']*100:.1f}%），"
+                                f"建议只投 ¥{high_vol['建议金额(风险平价)']:,.0f}。"
+                            )
             else:
                 st.info(
                     "暂无持仓或关注基金。\n\n"

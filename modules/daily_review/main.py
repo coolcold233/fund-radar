@@ -107,6 +107,10 @@ def render_daily_review():
     else:
         st.info("板块涨跌数据暂不可用。")
 
+    # --- 模块4：外围市场 ---
+    st.subheader("🌍 外围市场速览")
+    _render_external(data)
+
     # --- 模块6：财经新闻 ---
     st.subheader("📰 今日重要财经新闻")
     _render_news(data)
@@ -284,6 +288,62 @@ def _render_sector_ranking(data: Dict):
 
 
 # ================================================================
+# 模块4：外围市场速览
+# ================================================================
+
+def _render_external(data: Dict):
+    ext = data.get("external", {}) or {}
+    if not ext:
+        st.info("外围市场数据暂不可用（海外数据源连接失败）。")
+        return
+
+    # 第一行：全球股指（费城半导体高亮）
+    index_keys = [
+        ("nasdaq", "纳斯达克"), ("sp500", "标普500"), ("dow", "道琼斯"),
+        ("sox", "费城半导体 ⭐"), ("hsi", "恒生指数"),
+    ]
+    cols = st.columns(5)
+    for i, (key, label) in enumerate(index_keys):
+        with cols[i]:
+            info = ext.get(key)
+            if info and info.get("change_pct") is not None:
+                pct = info["change_pct"]
+                color = "🔴" if pct >= 0 else "🟢"
+                close_str = f"{info['close']:,.0f}" if info.get("close") else "—"
+                st.metric(label, close_str, f"{color} {pct:+.2f}%")
+            else:
+                st.metric(label, "—")
+
+    # 第二行：汇率 / 商品 / 美债
+    other_keys = [
+        ("dxy", "美元指数"), ("usdcnh", "离岸人民币"),
+        ("oil", "WTI原油"), ("gold", "黄金"), ("us10y", "美债10Y"),
+    ]
+    cols2 = st.columns(5)
+    for i, (key, label) in enumerate(other_keys):
+        with cols2[i]:
+            info = ext.get(key)
+            if info and info.get("change_pct") is not None:
+                pct = info["change_pct"]
+                close = info.get("close")
+                if info.get("is_bond"):
+                    # 美债：收益率 % + 变化 bp
+                    st.metric(label, f"{close:.2f}%", f"{pct:+.0f}bp")
+                elif info.get("inverse"):
+                    # 人民币：数值涨=人民币贬值，颜色反向提示
+                    color = "🟢贬值" if pct >= 0 else "🔴升值"
+                    st.metric(label, f"{close:.3f}" if close else "—", f"{color} {pct:+.2f}%")
+                else:
+                    color = "🔴" if pct >= 0 else "🟢"
+                    price_str = f"{close:,.2f}" if close else "—"
+                    st.metric(label, price_str, f"{color} {pct:+.2f}%")
+            else:
+                st.metric(label, "—")
+
+    st.caption("数据来源：Yahoo Finance（yfinance）｜反映最近一个交易日收盘情况；⭐ 费城半导体是全球科技股风向标")
+
+
+# ================================================================
 # 模块6：财经新闻（分级展示）
 # ================================================================
 
@@ -321,8 +381,12 @@ def _render_news(data: Dict):
         label = n.get("level_label", "⚪ 一般")
         title = _html.escape(n.get("title", ""))
         time = n.get("time", "")
+        # url 兜底：旧缓存/无链接接口 → 用标题生成百度搜索链接，保证每条都可点
         url = n.get("url", "")
-        source = _html.escape(n.get("source", ""))
+        if not url and n.get("title"):
+            from urllib.parse import quote
+            url = "https://www.baidu.com/s?wd=" + quote(n["title"][:30])
+        source = _html.escape(n.get("source", "相关报道"))
         summary = _html.escape(n.get("summary", ""))
 
         # 构造可点击标题
