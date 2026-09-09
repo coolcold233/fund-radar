@@ -123,6 +123,52 @@ def render_daily_review():
     st.subheader("📝 复盘笔记")
     _render_manual_notes(data, date_str)
 
+    # --- 新手友好：术语小词典 ---
+    st.subheader("📖 投资术语小词典（新手必读）")
+    _render_glossary()
+
+
+# ================================================================
+# 新手友好：投资术语小词典
+# ================================================================
+
+# 术语表：词 → 通俗解释
+GLOSSARY = [
+    ("上证指数", "上海证券交易所最有代表性的股票平均价格指数，代码 000001，常被当作'大盘'的代名词，反映沪市整体涨跌。"),
+    ("深证成指", "深圳证券交易所的核心指数，代码 399001，包含深市 500 只主要股票。"),
+    ("创业板指", "代码 399006，由创新创业型公司组成，波动比主板大，涨得猛跌得也猛，属于高风险高收益。"),
+    ("科创50", "代码 000688，科创板 50 只龙头股（多为半导体、硬科技），对科技行业景气度最敏感。"),
+    ("涨停 / 跌停", "A股规定普通股票一天最多涨 10%（涨停）或跌 10%（跌停），到了就无法再成交。涨停家数多说明市场情绪火热。"),
+    ("北向资金", "从香港流入内地股市的外资，被称为'聪明钱'。大幅流入通常被视为外资看好，大幅流出则偏谨慎。"),
+    ("两市成交额", "上海+深圳两个交易所一天的成交总金额（亿元）。超万亿通常算'放量'（交易活跃），低于 6000 亿算'缩量'（观望情绪浓）。"),
+    ("放量 / 缩量", "放量＝成交比平时活跃，趋势更可信；缩量＝交易清淡，行情可能没后劲。"),
+    ("板块", "同一类公司的集合，如'半导体板块''医药板块'。板块轮动＝资金在不同行业间来回切换。"),
+    ("结构性行情", "不是所有股票一起涨/跌，而是少数板块大涨、其他平淡。选错方向就会'赚了指数不赚钱'。"),
+    ("普涨 / 普跌", "大部分股票一起涨（普涨，牛市特征）或一起跌（普跌，系统性调整）。"),
+    ("股票仓位", "基金资产中买股票的比例。股票型基金仓位通常 80%-95%，所以基金涨跌≈持仓股票整体涨跌。"),
+    ("净值", "基金每份的价格。基金一天只公布一次净值（晚上），不像股票实时跳动。"),
+    ("美联储 / 降息 / 加息", "美联储是美国央行。降息＝印钱成本降低，利好股市；加息＝收紧，通常压制股市。它的动作影响全球市场。"),
+    ("费城半导体指数", "美股半导体龙头股指数（代号 SOX），是全球科技股的'风向标'，它大涨往往带动 A股科技板块。"),
+    ("风险偏好", "投资者愿不愿意承担风险。情绪高涨时大家敢买高风险成长股，情绪低迷时只敢买稳健的银行、消费。"),
+]
+
+def _render_glossary():
+    """渲染投资术语小词典，新手友好。"""
+    st.caption("看不懂复盘里的专业词？这里用大白话解释，点开即可查看。")
+    # 用 tabs 分类
+    tab1, tab2, tab3 = st.tabs(["📊 指数与行情", "💰 资金与情绪", "🌍 宏观与基金"])
+    groups = [
+        GLOSSARY[0:4],    # 指数
+        GLOSSARY[4:10],   # 行情/资金
+        GLOSSARY[10:],    # 宏观/基金
+    ]
+    for tab, items in zip([tab1, tab2, tab3], groups):
+        with tab:
+            for term, desc in items:
+                with st.expander(f"🔹 {term}"):
+                    st.write(desc)
+    st.info("💡 **给新手的建议**：先从'定投宽基指数基金'（如跟踪沪深300、中证500的基金）开始，不要一上来就追热点板块。用'投资风格评估'页测测自己能承受多大波动，再决定买什么。")
+
 
 # ================================================================
 # 模块1：大盘速览
@@ -242,13 +288,14 @@ def _render_sector_ranking(data: Dict):
 # ================================================================
 
 def _render_news(data: Dict):
+    import html as _html
     news = data.get("news", [])
     if not news:
         st.info("暂无新闻数据。")
         return
 
     # 筛选器
-    col_f1, col_f2, _ = st.columns([1, 1, 3])
+    col_f1, col_f2, col_f3 = st.columns([1, 1, 2.5])
     with col_f1:
         show_level = st.multiselect(
             "重要性",
@@ -258,8 +305,9 @@ def _render_news(data: Dict):
         )
     with col_f2:
         show_limit = st.selectbox("显示数量", [10, 20, 50], index=1, key="dr_news_limit")
+    with col_f3:
+        st.caption("💡 点击新闻标题可在新标签页打开原文；无原文链接时自动跳转搜索相关报道。")
 
-    level_map = {v: k for k, v in NEWS_LEVELS.items()}
     filtered = [n for n in news if n.get("level_label") in show_level]
     filtered = filtered[:show_limit]
 
@@ -267,28 +315,46 @@ def _render_news(data: Dict):
         st.caption("当前筛选条件下无新闻。")
         return
 
-    # 分组展示：重大/重要 展开，一般 折叠
+    # 渲染：重要新闻卡片展开，一般新闻折叠
     for n in filtered:
         level = n.get("level", "normal")
         label = n.get("level_label", "⚪ 一般")
-        title = n.get("title", "")
+        title = _html.escape(n.get("title", ""))
         time = n.get("time", "")
+        url = n.get("url", "")
+        source = _html.escape(n.get("source", ""))
+        summary = _html.escape(n.get("summary", ""))
+
+        # 构造可点击标题
+        if url:
+            title_html = (
+                f"<a href='{url}' target='_blank' rel='noopener noreferrer' "
+                f"style='color:inherit;text-decoration:none;font-weight:600;'>"
+                f"{title} <span style='color:#1c7ed6;font-size:0.85em;'>🔗原文↗</span></a>"
+            )
+        else:
+            title_html = f"<span style='font-weight:600;'>{title}</span>"
 
         if level in ("critical", "important"):
-            # 重要新闻直接展开
             color = "#c92a2a" if level == "critical" else "#e8590c"
+            bg = "#fff5f5" if level == "critical" else "#fff9f0"
+            summary_html = f"<div style='font-size:0.85rem;color:#666;margin-top:0.3rem;'>{summary}</div>" if summary else ""
             st.markdown(
-                f"<div style='padding:0.6rem 0.8rem;border-left:4px solid {color};"
-                f"background:#fff5f5;border-radius:4px;margin-bottom:0.4rem;'>"
-                f"<div style='font-weight:600;'>{label} {title}</div>"
-                f"<div style='font-size:0.8rem;color:#868e96;margin-top:0.2rem;'>⏰ {time}</div>"
+                f"<div style='padding:0.7rem 0.9rem;border-left:4px solid {color};"
+                f"background:{bg};border-radius:6px;margin-bottom:0.5rem;'>"
+                f"<div>{title_html}</div>"
+                f"{summary_html}"
+                f"<div style='font-size:0.78rem;color:#868e96;margin-top:0.3rem;'>⏰ {time} · 📰 {source}</div>"
                 f"</div>",
                 unsafe_allow_html=True,
             )
         else:
-            # 一般新闻折叠
-            with st.expander(f"{label} {title}"):
-                st.caption(f"⏰ {time}")
+            with st.expander(f"{label} {n.get('title','')[:50]}"):
+                if url:
+                    st.markdown(f"[🔗 点击查看原文/相关报道]({url})")
+                st.caption(f"⏰ {time} · 📰 {source}")
+                if summary:
+                    st.write(summary)
 
 
 # ================================================================

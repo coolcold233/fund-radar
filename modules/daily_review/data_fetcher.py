@@ -144,24 +144,25 @@ NEWS_LEVELS = {
     "normal": "⚪ 一般",
 }
 
-# 重大关键词
+# 重大关键词（真正可能引发市场剧烈波动的事件）
 CRITICAL_KEYWORDS = [
-    "美联储", "Fed", "降息", "加息", "议息", "决议",
-    "中美", "关税", "制裁", "封锁",
-    "IPO", "注册制", "退市",
-    "爆雷", "违约", "债券",
-    "降准", "央行", "MLF", "LPR",
-    "战争", "冲突", "袭击",
-    "熔断", "暴跌", "千股跌停",
+    "美联储", "Fed", "降息", "加息", "议息",
+    "中美", "关税", "制裁", "贸易战",
+    "爆雷", "违约", "债务危机",
+    "降准", "MLF降息", "LPR下调",
+    "战争", "冲突", "袭击", "军事",
+    "熔断", "千股跌停", "股灾",
+    "突发", "重磅",
 ]
 
 IMPORTANT_KEYWORDS = [
     "GDP", "CPI", "PPI", "社融", "PMI", "M2",
     "财报", "业绩", "超预期", "不及预期",
     "回购", "减持", "增持", "解禁",
-    "政策", "监管", "新规",
+    "政策", "监管", "新规", "央行",
     "板块", "概念", "涨停", "跌停",
-    "北向", "外资",
+    "北向", "外资", "LPR", "MLF",
+    "新能源", "半导体", "人工智能", "AI",
 ]
 
 
@@ -177,8 +178,54 @@ def _classify_news_level(title: str) -> str:
     return "normal"
 
 
+def _search_url(title: str) -> str:
+    """无原文链接时，构造百度搜索链接作为兜底（可查看相关报道）。"""
+    from urllib.parse import quote
+    return "https://www.baidu.com/s?wd=" + quote(title[:30])
+
+
+def _fetch_em_news(hours: int = 24) -> List[Dict]:
+    """东方财富全球财经快讯（自带原文链接）。"""
+    try:
+        import akshare as ak
+        df = ak.stock_info_global_em()
+        if df is None or len(df) == 0:
+            return []
+    except Exception:
+        return []
+
+    try:
+        now = datetime.datetime.now()
+        cutoff = now - datetime.timedelta(hours=hours)
+        df = df.copy()
+        df["_time"] = pd.to_datetime(df.get("发布时间"), errors="coerce")
+        df = df[df["_time"] >= cutoff].sort_values("_time", ascending=False)
+
+        news_list = []
+        for _, row in df.iterrows():
+            title = str(row.get("标题", "")).strip()
+            if not title or len(title) < 5:
+                continue
+            url = str(row.get("链接", "")).strip()
+            if not (url.startswith("http")):
+                url = _search_url(title)
+            level = _classify_news_level(title + str(row.get("摘要", "")))
+            news_list.append({
+                "time": row["_time"].strftime("%Y-%m-%d %H:%M") if pd.notna(row["_time"]) else "",
+                "title": title,
+                "summary": str(row.get("摘要", "")).strip()[:120],
+                "url": url,
+                "source": "东方财富",
+                "level": level,
+                "level_label": NEWS_LEVELS.get(level, "⚪ 一般"),
+            })
+        return news_list
+    except Exception:
+        return []
+
+
 def _fetch_cls_news(hours: int = 24) -> List[Dict]:
-    """拉取金十数据快讯并自动分级。"""
+    """拉取金十数据快讯并自动分级（无原文链接，用搜索兜底）。"""
     try:
         import akshare as ak
         df = ak.stock_info_global_cls()
@@ -209,16 +256,35 @@ def _fetch_cls_news(hours: int = 24) -> List[Dict]:
             news_list.append({
                 "time": row["_time"].strftime("%Y-%m-%d %H:%M") if pd.notna(row["_time"]) else "",
                 "title": title,
+                "summary": "",
+                "url": _search_url(title),
+                "source": "金十数据",
                 "level": level,
                 "level_label": NEWS_LEVELS.get(level, "⚪ 一般"),
             })
-
-        # 按重要性排序：critical > important > watch > normal
-        level_order = {"critical": 0, "important": 1, "watch": 2, "normal": 3}
-        news_list.sort(key=lambda x: level_order.get(x["level"], 99))
-        return news_list[:60]
+        return news_list
     except Exception:
         return []
+
+
+def _fetch_news(hours: int = 24) -> List[Dict]:
+    """汇总新闻：优先东方财富（有原文链接），补充金十快讯，按重要性排序。"""
+    merged = {}
+    # 东财（带链接，优先）
+    for n in _fetch_em_news(hours):
+        merged[n["title"][:40]] = n
+    # 金十（补充，去重）
+    for n in _fetch_cls_news(hours):
+        key = n["title"][:40]
+        if key not in merged:
+            merged[key] = n
+
+    news_list = list(merged.values())
+    level_order = {"critical": 0, "important": 1, "watch": 2, "normal": 3}
+    news_list.sort(key=lambda x: (level_order.get(x["level"], 99), x["time"]), reverse=False)
+    # 同级别内时间新的在前
+    news_list.sort(key=lambda x: level_order.get(x["level"], 99))
+    return news_list[:80]
 
 
 # ================================================================
@@ -304,7 +370,7 @@ def fetch_all_daily() -> Dict[str, Any]:
 
     # 4. 新闻
     print("  -> 财经新闻...")
-    result["news"] = _fetch_cls_news(hours=24)
+    result["news"] = _fetch_news(hours=24)
 
     # 5. 情绪评分
     result["market"]["sentiment_score"], result["market"]["sentiment_label"] = _calc_sentiment_score(result)
