@@ -399,6 +399,71 @@ def _fetch_external() -> Dict[str, Dict]:
 
 
 # ================================================================
+# 板块涨跌（多源）
+# ================================================================
+
+def _sectors_to_dict(d: pd.DataFrame) -> Dict[str, Any]:
+    """把含 name/pct 两列的 DataFrame 整理成板块龙虎榜结构（已排序）。"""
+    d = d.copy()
+    d["pct"] = pd.to_numeric(d["pct"], errors="coerce")
+    d = d.dropna(subset=["pct", "name"])
+    d["name"] = d["name"].astype(str)
+    d_sorted = d.sort_values("pct", ascending=False).reset_index(drop=True)
+    top10 = d_sorted.head(10)
+    bot10 = d_sorted.tail(10).iloc[::-1]  # 跌幅榜按跌幅从大到小
+    return {
+        "top_gainers": [
+            {"name": r["name"], "change_pct": round(float(r["pct"]), 2)}
+            for _, r in top10.iterrows()
+        ],
+        "top_losers": [
+            {"name": r["name"], "change_pct": round(float(r["pct"]), 2)}
+            for _, r in bot10.iterrows()
+        ],
+        "up_ratio": round(float((d["pct"] > 0).mean()), 3),
+        "spread": round(float(d["pct"].max() - d["pct"].min()), 2),
+        "total": int(len(d)),
+    }
+
+
+def _fetch_sectors() -> Dict[str, Any]:
+    """行业板块涨跌龙虎榜。主源新浪（快且稳，1~2s），兜底东财。"""
+    import akshare as ak
+
+    # 源 1：新浪行业板块（实测 49 个行业，~1.2s）
+    try:
+        df = ak.stock_sector_spot(indicator="新浪行业")
+        if df is not None and len(df) >= 10 and "板块" in df.columns and "涨跌幅" in df.columns:
+            d = df[["板块", "涨跌幅"]].copy()
+            d.columns = ["name", "pct"]
+            out = _sectors_to_dict(d)
+            if out.get("top_gainers"):
+                print(f"  板块涨跌(新浪): {out['total']} 个行业")
+                return out
+    except Exception as e:
+        print(f"  新浪板块失败: {type(e).__name__}: {str(e)[:50]}")
+
+    # 源 2：东方财富行业板块（海外/限流时可能失败）
+    try:
+        df = ak.stock_board_industry_name_em()
+        if df is not None and len(df) >= 10:
+            name_col = next((c for c in df.columns if "名称" in str(c)), None)
+            pct_col = next((c for c in df.columns if "涨跌幅" in str(c)), None)
+            if name_col and pct_col:
+                d = df[[name_col, pct_col]].copy()
+                d.columns = ["name", "pct"]
+                out = _sectors_to_dict(d)
+                if out.get("top_gainers"):
+                    print(f"  板块涨跌(东财): {out['total']} 个行业")
+                    return out
+    except Exception as e:
+        print(f"  东财板块失败: {type(e).__name__}: {str(e)[:50]}")
+
+    print("  板块涨跌: 所有数据源均失败")
+    return {}
+
+
+# ================================================================
 # 一站式拉取
 # ================================================================
 
@@ -458,27 +523,9 @@ def fetch_all_daily() -> Dict[str, Any]:
     result["market"]["limit_up_count"] = len(zt) if zt is not None else 0
     result["market"]["limit_down_count"] = len(dt) if dt is not None else 0
 
-    # 3. 板块涨跌（东方财富，可能失败）
+    # 3. 板块涨跌（新浪主源，东财兜底）
     print("  -> 板块涨跌...")
-    try:
-        import akshare as ak
-        sector_df = ak.stock_board_industry_name_em()
-        if sector_df is not None and len(sector_df) > 0:
-            name_col = next((c for c in sector_df.columns if "名称" in str(c)), None)
-            pct_col = next((c for c in sector_df.columns if "涨跌幅" in str(c)), None)
-            if pct_col and name_col:
-                sector_df[pct_col] = pd.to_numeric(sector_df[pct_col], errors="coerce").fillna(0)
-                top10 = sector_df.head(10)[[name_col, pct_col]].to_dict("records")
-                bot10 = sector_df.tail(10).iloc[::-1][[name_col, pct_col]].to_dict("records")
-                up_ratio = (sector_df[pct_col] > 0).mean()
-                result["sectors"] = {
-                    "top_gainers": [{"name": r[name_col], "change_pct": r[pct_col]} for r in top10],
-                    "top_losers": [{"name": r[name_col], "change_pct": r[pct_col]} for r in bot10],
-                    "up_ratio": round(up_ratio, 3),
-                    "spread": round(sector_df[pct_col].max() - sector_df[pct_col].min(), 2),
-                }
-    except Exception as e:
-        print(f"  板块涨跌失败: {type(e).__name__}")
+    result["sectors"] = _fetch_sectors()
 
     # 4. 新闻
     print("  -> 财经新闻...")
