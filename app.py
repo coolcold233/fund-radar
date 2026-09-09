@@ -2481,11 +2481,11 @@ def render_portfolio():
                 findings = []
                 findings.append(
                     f"- 📌 最稳健的持仓：「{lowest_vol['基金名称'] or lowest_vol['基金代码']}」"
-                    f"（年化波动 {lowest_vol['年化波动']*100:.1f}%，最大回撤 {lowest_vol['max_drawdown']*100:.1f}%）"
+                    f"（年化波动 {lowest_vol['年化波动']*100:.1f}%，最大回撤 {lowest_vol['最大回撤']*100:.1f}%）"
                 )
                 findings.append(
                     f"- ⚠️ 波动最大的持仓：「{highest_vol['基金名称'] or highest_vol['基金代码']}」"
-                    f"（年化波动 {highest_vol['年化波动']*100:.1f}%，最大回撤 {highest_vol['max_drawdown']*100:.1f}%），"
+                    f"（年化波动 {highest_vol['年化波动']*100:.1f}%，最大回撤 {highest_vol['最大回撤']*100:.1f}%），"
                     f"建议控制仓位"
                 )
                 # 看看有没有夏普为负的
