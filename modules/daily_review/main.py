@@ -438,21 +438,63 @@ def _render_attribution(data: Dict):
     cn_chg = cn.get("change_pct", 0)
     up_ratio = sectors.get("up_ratio", 0.5)
 
-    # 综合判断
-    if sh_chg > 0.5 and cn_chg > 1:
-        judgment = "今日A股收涨，创业板领涨，成长风格占优。"
-    elif sh_chg < -0.5 and cn_chg < -1:
-        judgment = "今日A股收跌，创业板领跌，风险偏好下降。"
-    elif sh_chg > 0.5 and cn_chg < -0.5:
-        judgment = "今日A股分化，大盘涨而创业板跌，价值风格占优。"
-    elif sh_chg < -0.5 and cn_chg > 0.5:
-        judgment = "今日A股分化，大盘跌而创业板涨，成长风格独立行情。"
+    # 综合判断（根据实际数据动态生成，避免千篇一律）
+    limit_up = market.get("limit_up_count", 0)
+    limit_down = market.get("limit_down_count", 0)
+
+    # 判断风格：大盘(上证) vs 成长(创业板) 谁更强
+    style_diff = sh_chg - cn_chg
+    if style_diff > 1.5:
+        style = "大盘价值风格显著占优（上证大幅跑赢创业板）"
+    elif style_diff > 0.5:
+        style = "偏大盘价值风格（上证强于创业板）"
+    elif style_diff < -1.5:
+        style = "成长风格显著占优（创业板大幅跑赢上证）"
+    elif style_diff < -0.5:
+        style = "偏成长风格（创业板强于上证）"
     else:
-        judgment = "今日A股窄幅震荡，多空博弈激烈。"
+        style = "大小盘风格均衡"
+
+    # 判断涨跌广度
+    if up_ratio >= 0.7:
+        breadth = "普涨格局（超7成板块上涨）"
+    elif up_ratio >= 0.5:
+        breadth = "涨多跌少"
+    elif up_ratio >= 0.3:
+        breadth = "跌多涨少"
+    else:
+        breadth = "普跌格局（超7成板块下跌）"
+
+    # 判断情绪
+    if limit_up >= 80:
+        mood = "情绪亢奋"
+    elif limit_up >= 40:
+        mood = "情绪偏暖"
+    elif limit_up >= 20:
+        mood = "情绪中性"
+    else:
+        mood = "情绪偏弱"
+    if limit_down >= 20:
+        mood += "、跌停家数偏多"
+
+    # 判断涨跌幅度级别
+    avg_chg = (sh_chg + cn_chg) / 2
+    if avg_chg >= 1.5:
+        intensity = "大涨"
+    elif avg_chg >= 0.5:
+        intensity = "上涨"
+    elif avg_chg > -0.5:
+        intensity = "窄幅震荡"
+    elif avg_chg > -1.5:
+        intensity = "下跌"
+    else:
+        intensity = "大跌"
+
+    judgment = f"今日A股{intensity}。{style}，{breadth}。涨停{limit_up}家、跌停{limit_down}家，{mood}。"
 
     with st.container(border=True):
         st.markdown(f"**【综合判断】** {judgment}")
-        st.markdown(f"📊 上证 {sh_chg:+.2f}% ｜ 创业板 {cn_chg:+.2f}% ｜ 上涨板块占比 {up_ratio*100:.0f}%")
+        st.markdown(f"📊 上证 {sh_chg:+.2f}% ｜ 创业板 {cn_chg:+.2f}% ｜ 涨停 {limit_up} / 跌停 {limit_down} ｜ 上涨板块占比 {up_ratio*100:.0f}%")
 
     # ---- 事件→板块传导分析（核心）----
     from .attribution import analyze_news_attribution

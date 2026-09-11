@@ -177,6 +177,61 @@ RULES: List[Dict[str, Any]] = [
 ]
 
 
+# ================================================================
+# 规则板块名 → 新浪行业名映射
+# 新浪行业分类较粗（仅49个），规则里的细分板块需映射到对应新浪行业
+# ================================================================
+
+SECTOR_TO_SINA = {
+    "半导体": "电子器件",
+    "通信设备": "电子信息",
+    "软件开发": "电子信息",
+    "银行": "金融行业",
+    "证券": "金融行业",
+    "黄金": "有色金属",
+    "贵金属": "有色金属",
+    "小金属": "有色金属",
+    "军工": "飞机制造",
+    "航运港口": "交通运输",
+    "航空机场": "交通运输",
+    "港口航运": "交通运输",
+    "建材": "建筑建材",
+    "食品饮料": "食品行业",
+    "农牧饲渔": "农林牧渔",
+    "电力设备": "发电设备",
+    "医药商业": "生物制药",
+    "化学制药": "生物制药",
+    "生物制品": "生物制药",
+    "纺织服装": "纺织行业",
+    "家用电器": "家电行业",
+    "汽车整车": "汽车制造",
+    "电池": "电子器件",
+    "石油行业": "石油行业",
+    "煤炭行业": "煤炭行业",
+    "房地产": "房地产",
+    "医疗器械": "医疗器械",
+    "商业百货": "商业百货",
+    "食品行业": "食品行业",
+    "交通运输": "交通运输",
+    "酿酒行业": "酿酒行业",
+    "电子器件": "电子器件",
+    "电子信息": "电子信息",
+    "有色金属": "有色金属",
+    "金融行业": "金融行业",
+    "发电设备": "发电设备",
+    "农林牧渔": "农林牧渔",
+    "生物制药": "生物制药",
+    "家电行业": "家电行业",
+    "汽车制造": "汽车制造",
+    "建筑建材": "建筑建材",
+}
+
+
+def _resolve_sector_name(name: str) -> str:
+    """把规则板块名解析成新浪行业名。"""
+    return SECTOR_TO_SINA.get(name, name)
+
+
 def match_rules(news_text: str) -> List[Dict[str, Any]]:
     """根据新闻标题/内容匹配影响规则，返回命中的规则列表。"""
     if not news_text:
@@ -219,11 +274,11 @@ def analyze_news_attribution(
                 if sector_name in seen_sectors:
                     continue
                 seen_sectors.add(sector_name)
-                # 查找该板块当日实际涨跌
-                actual = sectors_all.get(sector_name)
+                # 解析成新浪行业名后查实际涨跌
+                sina_name = _resolve_sector_name(sector_name)
+                actual = sectors_all.get(sina_name)
                 if actual is None:
-                    # 模糊匹配：板块名可能不完全一致
-                    actual = _fuzzy_find_sector(sector_name, sectors_all)
+                    actual = _fuzzy_find_sector(sina_name, sectors_all)
                 verified = None
                 if actual is not None:
                     if direction == 1:
@@ -231,11 +286,12 @@ def analyze_news_attribution(
                     elif direction == -1:
                         verified = actual < 0
                 impacts.append({
-                    "sector": sector_name,
-                    "direction": direction,  # 1利好 -1利空
+                    "sector": sector_name,          # 规则板块名（展示用）
+                    "sina_sector": sina_name,       # 新浪行业名（查数据用）
+                    "direction": direction,
                     "chain": chain,
                     "actual": actual,
-                    "verified": verified,  # True实际方向一致 / False不一致 / None无数据
+                    "verified": verified,
                     "rule_name": rule["name"],
                     "rule_logic": rule["logic"],
                 })
